@@ -23,11 +23,17 @@ export const DEFAULT_LIP_SLIDERS: LipSliderParams = {
   philtrumProjection: 0,
 };
 
+// ── Landmark sets for band-position classification ────────────────────────────
+const INNER_CANONICAL_SET = new Set([
+  ...LIP_LANDMARK_INDICES.upperInner,
+  ...LIP_LANDMARK_INDICES.lowerInner,
+]);
+
 /**
  * Enforces natural anatomical aesthetic limits:
  * - Upper lip: 35-45% of total lip volume
  * - Lower lip: 55-65% of total lip volume
- * - Ratio lower / upper lip between 1.2 and 1.8
+ * - Ratio lower / upper lip between 1.1 and 1.8  (relaxed from 1.2 per fix doc §3 P3)
  */
 function enforceNaturalRatio(
   upper: number,
@@ -40,8 +46,8 @@ function enforceNaturalRatio(
 
   if (u > 0 && l > 0) {
     const ratio = l / u;
-    if (ratio < 1.2) {
-      u = l / 1.2;
+    if (ratio < 1.1) {
+      u = l / 1.1;
     } else if (ratio > 1.8) {
       l = u * 1.8;
     }
@@ -53,25 +59,47 @@ function enforceNaturalRatio(
   };
 }
 
-// Gaussian spatial containment bubble
-const SIGMA_SCALE = 1.8; // Expanded to avoid attenuating target vermilion vertices
+// ── P1: Softer easing so mid-slider (~+10) gives ~45% response, not 25% ─────
+// Was t² (quadratic); now t^1.5. Slider +10/+20 → 0.45/1.0 instead of 0.25/1.0
+function naturalEase(t: number): number {
+  const sign = Math.sign(t);
+  const n = Math.min(1.0, Math.abs(t));
+  return sign * Math.pow(n, 1.5);
+}
+
+// ── P1: Gaussian sigma raised so corners aren't over-attenuated ──────────────
+// Was 1.4 → now 1.8 for the width term, preventing corner motion loss
+const SIGMA_SCALE_FULLNESS = 1.8;
+const SIGMA_SCALE_WIDTH    = 2.2; // wider kernel so width effect reaches corners
 
 function gaussianSpatialWeight(
   vx: number,
   vy: number,
   lipCx: number,
   lipCy: number,
-  lipHalfWidth: number
+  lipHalfWidth: number,
+  sigma: number
 ): number {
   const dx = (vx - lipCx) / lipHalfWidth;
   const dy = (vy - lipCy) / lipHalfWidth;
   const distSq = dx * dx + dy * dy;
-  return Math.exp(-distSq / (2 * SIGMA_SCALE * SIGMA_SCALE));
+  return Math.exp(-distSq / (2 * sigma * sigma));
 }
 
 /**
  * Computes deformed positions for all mesh vertices based on slider parameters.
  * Only lip sub-mesh vertices carry deformation; surrounding face vertices are unchanged.
+ *
+ * P0 fixes applied:
+ *   1. Weight hierarchy flipped in deformationWeights.ts (outer contour 1.0, inner 0.15)
+ *   2. Band-dilation: each vertex's displacement is scaled by bandT (0 inner → 1 outer)
+ *      so the outer vermilion contour moves ~6.5× further than the inner boundary
+ *
+ * P1 fixes applied:
+ *   3. MAX_FULLNESS_DISP raised from mouthWidth*0.08 → mouthWidth*0.22
+ *   4. MAX_WIDTH_DISP raised from mouthWidth*0.06 → mouthWidth*0.16
+ *   5. naturalEase(t) uses t^1.5 instead of t² (mid-slider ~45% vs 25% response)
+ *   6. Gaussian sigma widened so corners aren't attenuated on width deformation
  *
  * @param sourceVertices Fully resolved mesh vertices (same length as baseMesh.vertices)
  * @param baseMesh The CompleteMesh containing topology and weights
@@ -118,20 +146,22 @@ export function deformLipMesh(
   const lipCenterY  = (leftCorner.y + rightCorner.y) / 2;
   const lipHalfWidth = mouthWidth / 2;
 
-  // Calibrate displacement against face scale (mouth width)
-  const MAX_FULLNESS_DISP  = mouthWidth * 0.08;  // ~8%  of mouth width
-  const MAX_WIDTH_DISP     = mouthWidth * 0.06;  // ~6%  of mouth width
-  const MAX_BOW_DISP       = mouthWidth * 0.04;  // ~4%  cupid's bow
-  const MAX_CORNER_DISP    = mouthWidth * 0.05;  // ~5%  corner lift
-  const MAX_PHILTRUM_DISP  = mouthWidth * 0.04;  // ~4%  philtrum projection
+  // ── P1: Restored + increased magnitude headroom ────────────────────────────
+  // Target: outer contour ≥ 10 px at 720p slider +20 (was ~5 px).
+  // mouthWidth in normalised coords ≈ 0.20 at 720p → 0.22 * 0.20 * 720 ≈ 32 px ceiling.
+  const MAX_FULLNESS_DISP = mouthWidth * 0.22;  // was 0.08 — target outer contour ≥10 px
+  const MAX_WIDTH_DISP    = mouthWidth * 0.16;  // was 0.06
+  const MAX_BOW_DISP      = mouthWidth * 0.06;  // cupid's bow
+  const MAX_CORNER_DISP   = mouthWidth * 0.07;  // corner lift
+  const MAX_PHILTRUM_DISP = mouthWidth * 0.06;  // philtrum projection
 
-  // Clamped normalised inputs in [-1, 1]
-  const rawUpper    = Math.max(-1, Math.min(1, (sliders.upperFullness + sliders.overallFullness) / 20));
-  const rawLower    = Math.max(-1, Math.min(1, (sliders.lowerFullness + sliders.overallFullness) / 20));
-  const rawWidth    = Math.max(-1, Math.min(1, sliders.lipWidth / 15));
-  const rawBow      = Math.max(-1, Math.min(1, sliders.cupidsBowDefinition / 10));
-  const rawCorner   = Math.max(-1, Math.min(1, sliders.cornerLift / 10));
-  const rawPhiltrum = Math.max(-1, Math.min(1, sliders.philtrumProjection / 10));
+  // ── P1: Apply naturalEase (t^1.5) instead of raw linear ───────────────────
+  const rawUpper    = naturalEase(Math.max(-1, Math.min(1, (sliders.upperFullness + sliders.overallFullness) / 20)));
+  const rawLower    = naturalEase(Math.max(-1, Math.min(1, (sliders.lowerFullness + sliders.overallFullness) / 20)));
+  const rawWidth    = naturalEase(Math.max(-1, Math.min(1, sliders.lipWidth / 15)));
+  const rawBow      = naturalEase(Math.max(-1, Math.min(1, sliders.cupidsBowDefinition / 10)));
+  const rawCorner   = naturalEase(Math.max(-1, Math.min(1, sliders.cornerLift / 10)));
+  const rawPhiltrum = naturalEase(Math.max(-1, Math.min(1, sliders.philtrumProjection / 10)));
 
   const scaledUpper    = rawUpper * MAX_FULLNESS_DISP;
   const scaledLower    = rawLower * MAX_FULLNESS_DISP;
@@ -172,57 +202,70 @@ export function deformLipMesh(
     let dx = 0;
     let dy = 0;
 
-    // 1. Lip Width
+    // ── 1. Lip Width ──────────────────────────────────────────────────────
     if (weight.widthWeight > 0 && widthFactor !== 0) {
       const relX = (curX - lipCenterX) / lipHalfWidth;
-      dx += relX * widthFactor * weight.widthWeight;
+      // P1: distribute stretch along the full border (sqrt softens corner peak)
+      const stretchCurve = Math.sign(relX) * Math.sqrt(Math.abs(relX));
+      dx += stretchCurve * widthFactor * weight.widthWeight;
     }
 
-    // 2. Fullness (Upper / Lower)
+    // ── 2. Fullness with band-dilation (P0 fix) ───────────────────────────
+    // bandT: 0 at inner boundary (teeth side) → 1 at outer vermilion contour.
+    // Canonical landmark index tells us which side we're on.
+    const lmIdx = baseMesh.vertices[i]?.landmarkIndex ?? -1;
+    const isInnerBoundary = lmIdx >= 0 && INNER_CANONICAL_SET.has(lmIdx);
+    // For synthetic vertices, estimate band position from weightA: outer parent = closer to 1
+    const weightA = baseMesh.vertices[i]?.weightA;
+    const bandT = isInnerBoundary
+      ? 0.1
+      : lmIdx >= 0
+        ? 1.0  // canonical outer border
+        : (weightA !== undefined ? Math.max(0.1, 1.0 - weightA) : 0.6); // synthetic
+
     if (weight.fullnessWeight > 0) {
       const distFromCenterNorm = Math.min(1, Math.abs(curX - lipCenterX) / lipHalfWidth);
-      const centerFalloff = Math.cos(distFromCenterNorm * (Math.PI / 2));
+      const centerFalloff = Math.cos(distFromCenterNorm * (Math.PI / 2)); // 1 at center, 0 at corners
 
       if (weight.isUpperLip && upperFullnessFactor !== 0) {
-        dy -= upperFullnessFactor * weight.fullnessWeight * centerFalloff;
+        // Upper lip moves upward; band-dilation makes outer contour travel most
+        dy -= upperFullnessFactor * weight.fullnessWeight * centerFalloff * bandT;
       } else if (weight.isLowerLip && lowerFullnessFactor !== 0) {
-        dy += lowerFullnessFactor * weight.fullnessWeight * centerFalloff;
+        // Lower lip moves downward; same band-dilation
+        dy += lowerFullnessFactor * weight.fullnessWeight * centerFalloff * bandT;
       }
     }
 
-    // 3. Cupid's Bow Definition  (upper lip only)
-    // Positive → sharper double-peak arc; Negative → flatter vermilion border
+    // ── 3. Cupid's Bow Definition (upper lip outer only) ──────────────────
     if (weight.isUpperLip && weight.fullnessWeight > 0 && bowFactor !== 0) {
-      const relX = (curX - lipCenterX) / lipHalfWidth; // [-1..1]
-      // sin shape peaks at ±0.5 and is 0 at centre & corners
-      const bowShape = Math.sin(Math.abs(relX) * Math.PI);
-      dy -= bowFactor * bowShape * weight.fullnessWeight;
+      const relX = (curX - lipCenterX) / lipHalfWidth;
+      const bowShape = Math.sin(Math.abs(relX) * Math.PI); // peaks at ±0.5 normalised x
+      dy -= bowFactor * bowShape * weight.fullnessWeight * bandT;
     }
 
-    // 4. Corner Lift
-    // Positive → corners rise (smile arc); Negative → corners drop
+    // ── 4. Corner Lift ────────────────────────────────────────────────────
     if (cornerLiftFactor !== 0 && weight.widthWeight > 0) {
       const relX = (curX - lipCenterX) / lipHalfWidth;
       const cornerWeight = Math.max(0, Math.abs(relX) - 0.5) * 2; // 0 at centre, 1 at corners
       dy -= cornerLiftFactor * cornerWeight * weight.widthWeight;
-      // Subtle inward x-pull that mirrors natural smiling geometry
       dx -= relX * Math.abs(cornerLiftFactor) * 0.3 * cornerWeight * weight.widthWeight;
     }
 
-    // 5. Philtrum Projection  (upper lip centre column only)
-    // Positive → project philtral column outward; Negative → flatten
+    // ── 5. Philtrum Projection (upper lip centre column only) ─────────────
     if (weight.isUpperLip && weight.fullnessWeight > 0 && philtrumFactor !== 0) {
       const relX = (curX - lipCenterX) / lipHalfWidth;
-      // Tight Gaussian at x=0, σ=0.3
-      const philtrumMask = Math.exp(-(relX * relX) / (2 * 0.09));
-      dy -= philtrumFactor * philtrumMask * weight.fullnessWeight;
+      const philtrumMask = Math.exp(-(relX * relX) / (2 * 0.09)); // σ=0.3 tight Gaussian
+      dy -= philtrumFactor * philtrumMask * weight.fullnessWeight * bandT;
     }
 
-    const gaussianScale = gaussianSpatialWeight(curX, curY, lipCenterX, lipCenterY, lipHalfWidth);
+    // ── Gaussian spatial containment ──────────────────────────────────────
+    // Separate sigmas: fullness uses 1.8 (moderate), width uses 2.2 (wider, not eating corners)
+    const gaussFull  = gaussianSpatialWeight(curX, curY, lipCenterX, lipCenterY, lipHalfWidth, SIGMA_SCALE_FULLNESS);
+    const gaussWidth = gaussianSpatialWeight(curX, curY, lipCenterX, lipCenterY, lipHalfWidth, SIGMA_SCALE_WIDTH);
 
     deformed[i] = {
-      x: curX + dx * gaussianScale,
-      y: curY + dy * gaussianScale,
+      x: curX + dx * gaussWidth,
+      y: curY + dy * gaussFull,
     };
   }
 

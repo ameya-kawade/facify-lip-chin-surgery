@@ -167,13 +167,19 @@ export class LiveRenderer {
             sliders.upperFullness === 0 &&
             sliders.lowerFullness === 0 &&
             sliders.overallFullness === 0 &&
-            sliders.lipWidth === 0;
+            sliders.lipWidth === 0 &&
+            sliders.cupidsBowDefinition === 0 &&
+            sliders.cornerLift === 0 &&
+            sliders.philtrumProjection === 0;
 
           const isChinZero =
             !chinSliders ||
             (chinSliders.verticalLength === 0 &&
               chinSliders.projection === 0 &&
-              chinSliders.chinWidth === 0);
+              chinSliders.chinWidth === 0 &&
+              chinSliders.jawAngleWidth === 0 &&
+              chinSliders.chinAsymmetryTilt === 0 &&
+              chinSliders.prejowlCorrection === 0);
 
           const isIdentity = isLipZero && isChinZero;
 

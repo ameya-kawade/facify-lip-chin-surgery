@@ -96,6 +96,18 @@ export function buildLipMesh(neutralLandmarks: Point2D[]): CompleteMesh {
     new Set([...lipTriangleIndices, ...chinTriangleIndices])
   );
 
+  // P2 diagnostic: log active triangle counts once so we know we're NOT on the silent fallback
+  // Check for the global flag to avoid spamming on every face frame
+  if (!(globalThis as Record<string, unknown>)['_facifyMeshLogged']) {
+    (globalThis as Record<string, unknown>)['_facifyMeshLogged'] = true;
+    console.info(
+      '[facify/mesh] canonical triangulation active:',
+      combinedTriangles.length, 'total |',
+      lipTriangleIndices.length, 'lip |',
+      chinTriangleIndices.length, 'chin triangles'
+    );
+  }
+
   return {
     vertices: allVertices,
     triangles: combinedTriangles,
