@@ -7,6 +7,10 @@ export interface ImageWarperOptions {
   wireframeColor?: string;
   triangleIndices?: number[];
   isIdentity?: boolean;
+  /** Show displacement vector arrows from source → deformed for each active vertex (debug) */
+  renderDisplacementVectors?: boolean;
+  /** Chin triangle indices to highlight separately in debug overlay */
+  chinTriangleIndices?: number[];
 }
 
 export interface WarperDiagnostic {
@@ -196,9 +200,10 @@ export function renderWarpedFrame(
   // Debug wireframe rendering
   if (options.renderWireframe) {
     ctx.save();
+
+    // 1. Draw lip triangles in cyan
     ctx.strokeStyle = options.wireframeColor || 'rgba(0, 240, 255, 0.4)';
     ctx.lineWidth = 1;
-
     for (let i = 0; i < activeTriangles.length; i++) {
       const triIdx = activeTriangles[i];
       if (triIdx < 0 || triIdx >= mesh.triangles.length) continue;
@@ -215,6 +220,82 @@ export function renderWarpedFrame(
       ctx.closePath();
       ctx.stroke();
     }
+
+    // 2. Overlay chin triangles in amber so they are distinguishable
+    const chinTris = options.chinTriangleIndices ?? mesh.chinTriangleIndices ?? [];
+    if (chinTris.length > 0) {
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < chinTris.length; i++) {
+        const triIdx = chinTris[i];
+        if (triIdx < 0 || triIdx >= mesh.triangles.length) continue;
+        const [idx0, idx1, idx2] = mesh.triangles[triIdx];
+        const d0 = deformedVertices[idx0];
+        const d1 = deformedVertices[idx1];
+        const d2 = deformedVertices[idx2];
+        if (!d0 || !d1 || !d2) continue;
+        ctx.beginPath();
+        ctx.moveTo(d0.x * canvasWidth, d0.y * canvasHeight);
+        ctx.lineTo(d1.x * canvasWidth, d1.y * canvasHeight);
+        ctx.lineTo(d2.x * canvasWidth, d2.y * canvasHeight);
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+
+    // 3. Draw displacement vectors: source → deformed for every active vertex (Phase 2)
+    if (options.renderDisplacementVectors) {
+      // Collect unique vertex indices from active triangles
+      const activeVertexSet = new Set<number>();
+      for (const triIdx of activeTriangles) {
+        if (triIdx < 0 || triIdx >= mesh.triangles.length) continue;
+        const [a, b, c] = mesh.triangles[triIdx];
+        activeVertexSet.add(a); activeVertexSet.add(b); activeVertexSet.add(c);
+      }
+      ctx.lineWidth = 1;
+      for (const vi of activeVertexSet) {
+        const s = sourceVertices[vi];
+        const d = deformedVertices[vi];
+        if (!s || !d) continue;
+        const sx = s.x * canvasWidth;
+        const sy = s.y * canvasHeight;
+        const dx2 = d.x * canvasWidth;
+        const dy2 = d.y * canvasHeight;
+        const dispPx = Math.hypot(dx2 - sx, dy2 - sy);
+        if (dispPx < 0.5) continue; // skip near-zero
+
+        // Arrow colour: green for lip region, amber for chin, white for shared
+        const isChinVertex = chinTris.some(ti => {
+          if (ti < 0 || ti >= mesh.triangles.length) return false;
+          const [a, b, c] = mesh.triangles[ti];
+          return a === vi || b === vi || c === vi;
+        });
+        ctx.strokeStyle = isChinVertex
+          ? `rgba(251, 191, 36, ${Math.min(1, dispPx / 8)})`
+          : `rgba(0, 240, 255, ${Math.min(1, dispPx / 8)})`;
+
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(dx2, dy2);
+        ctx.stroke();
+
+        // Arrowhead
+        const angle = Math.atan2(dy2 - sy, dx2 - sx);
+        const headLen = Math.min(6, dispPx * 0.4);
+        ctx.beginPath();
+        ctx.moveTo(dx2, dy2);
+        ctx.lineTo(dx2 - headLen * Math.cos(angle - 0.5), dy2 - headLen * Math.sin(angle - 0.5));
+        ctx.moveTo(dx2, dy2);
+        ctx.lineTo(dx2 - headLen * Math.cos(angle + 0.5), dy2 - headLen * Math.sin(angle + 0.5));
+        ctx.stroke();
+      }
+
+      // Displacement magnitude HUD  (top-left corner)
+      ctx.font = '11px monospace';
+      ctx.fillStyle = 'rgba(251,191,36,0.9)';
+      ctx.fillText(`chin Δmax: ${Math.sqrt(maxDispSq).toFixed(1)} px`, 8, canvasHeight - 24);
+    }
+
     ctx.restore();
   }
 

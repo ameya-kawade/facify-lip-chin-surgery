@@ -207,6 +207,10 @@ export class LiveRenderer {
             this.mesh,
             {
               renderWireframe: wireframeRef.current,
+              // Phase 2: Pass chin triangle indices so debug overlay colours them amber
+              // and draws displacement vectors for all active vertices
+              chinTriangleIndices: this.mesh.chinTriangleIndices,
+              renderDisplacementVectors: wireframeRef.current,
               isIdentity,
             }
           );
