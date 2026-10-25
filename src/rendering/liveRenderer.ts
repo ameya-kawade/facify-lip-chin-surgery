@@ -3,9 +3,10 @@ import { LandmarkSmoother, Point2D } from '../tracking/landmarkSmoother';
 import { estimatePoseFromMatrix, PoseEstimate } from '../tracking/poseEstimator';
 import { JawOpenGate } from '../tracking/jawOpenGate';
 import { CompleteMesh, buildLipMesh } from '../mesh/lipMeshBuilder';
+import { resolveMeshPositions } from '../mesh/resolveMeshPositions';
 import { deformLipMesh, LipSliderParams } from '../surgeries/lipAugmentation';
 import { deformChinMesh, ChinSliderParams } from '../surgeries/chinSurgery';
-import { renderWarpedFrame } from '../warping/imageWarper';
+import { renderWarpedFrame, WarperDiagnostic } from '../warping/imageWarper';
 
 export interface RendererStatus {
   fps: number;
@@ -13,6 +14,13 @@ export interface RendererStatus {
   isFrontal: boolean;
   confidence: number;
   pose: PoseEstimate;
+  rawJawOpen: number;
+  jawGateScale: number;
+  effectiveScale: number;
+  gateReason?: string;
+  activeTriangles: number;
+  skippedTriangles: number;
+  maxDisplacementPx: number;
 }
 
 export interface LiveRendererOptions {
@@ -39,12 +47,22 @@ export class LiveRenderer {
   private lastFpsTime = performance.now();
   private currentFps = 0;
   private lastStatusDispatch = 0;
+  private lastDiagnostic: WarperDiagnostic = {
+    activeTriangles: 0,
+    renderedTriangles: 0,
+    skippedTriangles: 0,
+    maxDisplacementPx: 0,
+  };
 
   async start(options: LiveRendererOptions): Promise<void> {
     if (this.isRunning) return;
     this.isRunning = true;
 
+    this.activeVideoElement = options.video;
     await this.tracker.initialize();
+
+    // Guard against stop() called while awaiting initialize()
+    if (!this.isRunning) return;
 
     const {
       video,
@@ -55,24 +73,26 @@ export class LiveRenderer {
       wireframeRef,
       onStatusUpdate,
     } = options;
-    this.activeVideoElement = video;
 
     const ctx = canvas.getContext('2d', { willReadFrequently: false });
     if (!ctx) {
       console.error('LiveRenderer: Failed to acquire 2D canvas context');
+      this.isRunning = false;
       return;
     }
 
     const scheduleNextFrame = () => {
       if (!this.isRunning) return;
       if ('requestVideoFrameCallback' in video) {
-        this.videoCallbackId = (video as any).requestVideoFrameCallback(
-          (_now: number, meta: { mediaTime: number }) => {
-            loop(meta.mediaTime * 1000);
-          }
-        );
+        this.videoCallbackId = video.requestVideoFrameCallback((now: number) => {
+          this.videoCallbackId = null;
+          loop(now);
+        });
       } else {
-        this.animationFrameId = requestAnimationFrame(loop);
+        this.animationFrameId = requestAnimationFrame((now: number) => {
+          this.animationFrameId = null;
+          loop(now);
+        });
       }
     };
 
@@ -93,10 +113,20 @@ export class LiveRenderer {
       const faceDetected = tracking.landmarks.length > 0;
       const pose = estimatePoseFromMatrix(tracking.matrix);
 
+      let jawEffectScale = 1.0;
+      let effectiveScale = 1.0;
+      let gateReason: string | undefined;
+
       if (!faceDetected || w === 0 || h === 0) {
         if (video.readyState >= 2 && w > 0 && h > 0) {
           ctx.drawImage(video, 0, 0, w, h);
         }
+        this.lastDiagnostic = {
+          activeTriangles: 0,
+          renderedTriangles: 0,
+          skippedTriangles: 0,
+          maxDisplacementPx: 0,
+        };
       } else {
         const smoothedLandmarks: Point2D[] = this.smoother.smooth(tracking.landmarks, timestamp);
 
@@ -104,37 +134,75 @@ export class LiveRenderer {
           this.mesh = buildLipMesh(smoothedLandmarks);
         }
 
-        if (isBeforeAfterActiveRef.current) {
+        // Strict mesh coordinate contract: resolve full source vertices matching mesh.vertices
+        const sourceVertices = resolveMeshPositions(smoothedLandmarks, this.mesh);
+
+        if (!sourceVertices) {
+          if (video.readyState >= 2 && w > 0 && h > 0) {
+            ctx.drawImage(video, 0, 0, w, h);
+          }
+        } else if (isBeforeAfterActiveRef.current) {
           ctx.drawImage(video, 0, 0, w, h);
+          this.lastDiagnostic = {
+            activeTriangles: 0,
+            renderedTriangles: 0,
+            skippedTriangles: 0,
+            maxDisplacementPx: 0,
+          };
         } else {
           const sliders = sliderRef.current;
-          const headAngleConfidence = pose.isFrontal ? 1.0 : pose.score;
-          const jawEffectScale = this.jawGate.update(tracking.jawOpen, timestamp);
-          const effectScale = headAngleConfidence * jawEffectScale;
+          const chinSliders = chinSliderRef?.current;
 
-          // Step 1: Deform lip submesh
+          const headAngleConfidence = pose.isFrontal ? 1.0 : pose.score;
+          jawEffectScale = this.jawGate.update(tracking.jawOpen, timestamp);
+          effectiveScale = headAngleConfidence * jawEffectScale;
+
+          if (jawEffectScale < 0.5) {
+            gateReason = 'Mouth open (gated)';
+          } else if (!pose.isFrontal) {
+            gateReason = 'Head turned (low confidence)';
+          }
+
+          const isLipZero =
+            sliders.upperFullness === 0 &&
+            sliders.lowerFullness === 0 &&
+            sliders.overallFullness === 0 &&
+            sliders.lipWidth === 0;
+
+          const isChinZero =
+            !chinSliders ||
+            (chinSliders.verticalLength === 0 &&
+              chinSliders.projection === 0 &&
+              chinSliders.chinWidth === 0);
+
+          const isIdentity = isLipZero && isChinZero;
+
+          // Step 1: Deform lip submesh from resolved source vertices
           const lipDeformed = deformLipMesh(
-            smoothedLandmarks,
+            sourceVertices,
             this.mesh,
             sliders,
-            effectScale
+            effectiveScale
           );
 
           // Step 2: Deform chin submesh
-          const chinSliders = chinSliderRef?.current;
           const fullyDeformed = chinSliders
-            ? deformChinMesh(lipDeformed, this.mesh, chinSliders, effectScale)
+            ? deformChinMesh(lipDeformed, this.mesh, chinSliders, effectiveScale)
             : lipDeformed;
 
-          renderWarpedFrame(
+          // Render warped frame using full source and destination vertices arrays
+          this.lastDiagnostic = renderWarpedFrame(
             ctx,
             video,
             w,
             h,
-            smoothedLandmarks,
+            sourceVertices,
             fullyDeformed,
             this.mesh,
-            { renderWireframe: wireframeRef.current }
+            {
+              renderWireframe: wireframeRef.current,
+              isIdentity,
+            }
           );
         }
       }
@@ -155,6 +223,13 @@ export class LiveRenderer {
           isFrontal: pose.isFrontal,
           confidence: tracking.confidence,
           pose,
+          rawJawOpen: tracking.jawOpen,
+          jawGateScale: jawEffectScale,
+          effectiveScale,
+          gateReason,
+          activeTriangles: this.lastDiagnostic.activeTriangles,
+          skippedTriangles: this.lastDiagnostic.skippedTriangles,
+          maxDisplacementPx: this.lastDiagnostic.maxDisplacementPx,
         });
       }
 
@@ -170,12 +245,8 @@ export class LiveRenderer {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
-    if (
-      this.videoCallbackId !== null &&
-      this.activeVideoElement &&
-      'cancelVideoFrameCallback' in this.activeVideoElement
-    ) {
-      (this.activeVideoElement as any).cancelVideoFrameCallback(this.videoCallbackId);
+    if (this.videoCallbackId !== null && this.activeVideoElement && 'cancelVideoFrameCallback' in this.activeVideoElement) {
+      this.activeVideoElement.cancelVideoFrameCallback(this.videoCallbackId);
       this.videoCallbackId = null;
     }
     this.smoother.reset();

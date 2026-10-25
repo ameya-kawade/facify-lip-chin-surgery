@@ -6,6 +6,14 @@ export interface ImageWarperOptions {
   renderWireframe?: boolean;
   wireframeColor?: string;
   triangleIndices?: number[];
+  isIdentity?: boolean;
+}
+
+export interface WarperDiagnostic {
+  activeTriangles: number;
+  renderedTriangles: number;
+  skippedTriangles: number;
+  maxDisplacementPx: number;
 }
 
 let cachedOffscreen: OffscreenCanvas | null = null;
@@ -32,10 +40,10 @@ function getCanvases(width: number, height: number): {
 }
 
 /**
- * Orchestrates the full frame rendering:
- * 1. Draws current camera frame to offscreen source and target
+ * Orchestrates full frame rendering:
+ * 1. Fast-path identity: when all sliders are 0 and wireframe is off, blits camera frame directly
  * 2. Warps active sub-mesh triangles (lips, chin, or both) with edge expansion
- * 3. Composites the complete result to the output context in one draw call
+ * 3. Tracks diagnostic counts (rendered vs skipped degenerate triangles, max displacement)
  * 4. Optionally renders debug wireframe
  */
 export function renderWarpedFrame(
@@ -47,11 +55,26 @@ export function renderWarpedFrame(
   deformedVertices: Point2D[],
   mesh: CompleteMesh,
   options: ImageWarperOptions = {}
-): void {
+): WarperDiagnostic {
+  // Identity fast path: avoids unnecessary canvas clipping/matrix math when no sliders are moved
+  if (options.isIdentity && !options.renderWireframe) {
+    ctx.drawImage(sourceImage, 0, 0, canvasWidth, canvasHeight);
+    return {
+      activeTriangles: 0,
+      renderedTriangles: 0,
+      skippedTriangles: 0,
+      maxDisplacementPx: 0,
+    };
+  }
+
   const activeTriangles =
     options.triangleIndices ??
     mesh.allActiveTriangleIndices ??
     mesh.lipTriangleIndices;
+
+  let renderedCount = 0;
+  let skippedCount = 0;
+  let maxDispSq = 0;
 
   // Use OffscreenCanvas if available for clean double-buffering
   if (typeof OffscreenCanvas !== 'undefined') {
@@ -66,6 +89,10 @@ export function renderWarpedFrame(
 
     for (let i = 0; i < activeTriangles.length; i++) {
       const triIdx = activeTriangles[i];
+      if (triIdx < 0 || triIdx >= mesh.triangles.length) {
+        skippedCount++;
+        continue;
+      }
       const [idx0, idx1, idx2] = mesh.triangles[triIdx];
 
       const s0 = sourceVertices[idx0];
@@ -76,7 +103,24 @@ export function renderWarpedFrame(
       const d1 = deformedVertices[idx1];
       const d2 = deformedVertices[idx2];
 
-      if (!s0 || !s1 || !s2 || !d0 || !d1 || !d2) continue;
+      if (
+        !s0 || !s1 || !s2 || !d0 || !d1 || !d2 ||
+        !Number.isFinite(s0.x) || !Number.isFinite(s0.y) ||
+        !Number.isFinite(s1.x) || !Number.isFinite(s1.y) ||
+        !Number.isFinite(s2.x) || !Number.isFinite(s2.y) ||
+        !Number.isFinite(d0.x) || !Number.isFinite(d0.y) ||
+        !Number.isFinite(d1.x) || !Number.isFinite(d1.y) ||
+        !Number.isFinite(d2.x) || !Number.isFinite(d2.y)
+      ) {
+        skippedCount++;
+        continue;
+      }
+
+      // Track max displacement in pixel space
+      const px0 = (d0.x - s0.x) * canvasWidth;
+      const py0 = (d0.y - s0.y) * canvasHeight;
+      const disp0 = px0 * px0 + py0 * py0;
+      if (disp0 > maxDispSq) maxDispSq = disp0;
 
       const srcTri: TrianglePoints = {
         p0: { x: s0.x * canvasWidth, y: s0.y * canvasHeight },
@@ -90,7 +134,12 @@ export function renderWarpedFrame(
         p2: { x: d2.x * canvasWidth, y: d2.y * canvasHeight },
       };
 
-      warpTriangle(compositingCtx, offscreen, srcTri, dstTri);
+      const success = warpTriangle(compositingCtx, offscreen, srcTri, dstTri);
+      if (success) {
+        renderedCount++;
+      } else {
+        skippedCount++;
+      }
     }
 
     // Single blit to final canvas
@@ -100,6 +149,10 @@ export function renderWarpedFrame(
     ctx.drawImage(sourceImage, 0, 0, canvasWidth, canvasHeight);
     for (let i = 0; i < activeTriangles.length; i++) {
       const triIdx = activeTriangles[i];
+      if (triIdx < 0 || triIdx >= mesh.triangles.length) {
+        skippedCount++;
+        continue;
+      }
       const [idx0, idx1, idx2] = mesh.triangles[triIdx];
       const s0 = sourceVertices[idx0];
       const s1 = sourceVertices[idx1];
@@ -107,7 +160,20 @@ export function renderWarpedFrame(
       const d0 = deformedVertices[idx0];
       const d1 = deformedVertices[idx1];
       const d2 = deformedVertices[idx2];
-      if (!s0 || !s1 || !s2 || !d0 || !d1 || !d2) continue;
+
+      if (
+        !s0 || !s1 || !s2 || !d0 || !d1 || !d2 ||
+        !Number.isFinite(s0.x) || !Number.isFinite(s0.y) ||
+        !Number.isFinite(s1.x) || !Number.isFinite(s1.y) ||
+        !Number.isFinite(s2.x) || !Number.isFinite(s2.y) ||
+        !Number.isFinite(d0.x) || !Number.isFinite(d0.y) ||
+        !Number.isFinite(d1.x) || !Number.isFinite(d1.y) ||
+        !Number.isFinite(d2.x) || !Number.isFinite(d2.y)
+      ) {
+        skippedCount++;
+        continue;
+      }
+
       const srcTri: TrianglePoints = {
         p0: { x: s0.x * canvasWidth, y: s0.y * canvasHeight },
         p1: { x: s1.x * canvasWidth, y: s1.y * canvasHeight },
@@ -118,11 +184,16 @@ export function renderWarpedFrame(
         p1: { x: d1.x * canvasWidth, y: d1.y * canvasHeight },
         p2: { x: d2.x * canvasWidth, y: d2.y * canvasHeight },
       };
-      warpTriangle(ctx, sourceImage, srcTri, dstTri);
+      const success = warpTriangle(ctx, sourceImage, srcTri, dstTri);
+      if (success) {
+        renderedCount++;
+      } else {
+        skippedCount++;
+      }
     }
   }
 
-  // Step 3: Optional debug wireframe rendering
+  // Debug wireframe rendering
   if (options.renderWireframe) {
     ctx.save();
     ctx.strokeStyle = options.wireframeColor || 'rgba(0, 240, 255, 0.4)';
@@ -130,6 +201,7 @@ export function renderWarpedFrame(
 
     for (let i = 0; i < activeTriangles.length; i++) {
       const triIdx = activeTriangles[i];
+      if (triIdx < 0 || triIdx >= mesh.triangles.length) continue;
       const [idx0, idx1, idx2] = mesh.triangles[triIdx];
       const d0 = deformedVertices[idx0];
       const d1 = deformedVertices[idx1];
@@ -145,4 +217,11 @@ export function renderWarpedFrame(
     }
     ctx.restore();
   }
+
+  return {
+    activeTriangles: activeTriangles.length,
+    renderedTriangles: renderedCount,
+    skippedTriangles: skippedCount,
+    maxDisplacementPx: Math.sqrt(maxDispSq),
+  };
 }

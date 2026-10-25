@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { deformLipMesh } from '../lipAugmentation';
+import { deformLipMesh, DEFAULT_LIP_SLIDERS } from '../lipAugmentation';
 import { buildLipMesh } from '../../mesh/lipMeshBuilder';
 import { LIP_LANDMARK_INDICES } from '../../mesh/lipControlPoints';
 import { Point2D } from '../../tracking/landmarkSmoother';
 
-describe('LipAugmentation Deformation Engine (Phase 4)', () => {
+describe('LipAugmentation Deformation Engine (Phase 3 & 7)', () => {
   const mockLandmarks: Point2D[] = Array.from({ length: 478 }, (_, i) => ({
     x: 0.5 + Math.sin(i * 0.1) * 0.2,
     y: 0.5 + Math.cos(i * 0.1) * 0.2,
@@ -18,6 +18,15 @@ describe('LipAugmentation Deformation Engine (Phase 4)', () => {
 
   const baseMesh = buildLipMesh(mockLandmarks);
 
+  it('returns identical coordinates when all sliders are zero (identity fast path)', () => {
+    const deformed = deformLipMesh(mockLandmarks, baseMesh, DEFAULT_LIP_SLIDERS, 1.0);
+    expect(deformed).toHaveLength(baseMesh.vertices.length);
+    for (let i = 0; i < mockLandmarks.length; i++) {
+      expect(deformed[i].x).toBe(mockLandmarks[i].x);
+      expect(deformed[i].y).toBe(mockLandmarks[i].y);
+    }
+  });
+
   it('keeps mouth corners anchored during fullness adjustments', () => {
     const leftCornerIdx = LIP_LANDMARK_INDICES.leftCorner;
     const rightCornerIdx = LIP_LANDMARK_INDICES.rightCorner;
@@ -29,7 +38,6 @@ describe('LipAugmentation Deformation Engine (Phase 4)', () => {
       1.0
     );
 
-    // Mouth corners should NOT move at all on fullness
     expect(deformed[leftCornerIdx].x).toBeCloseTo(mockLandmarks[leftCornerIdx].x, 5);
     expect(deformed[leftCornerIdx].y).toBeCloseTo(mockLandmarks[leftCornerIdx].y, 5);
     expect(deformed[rightCornerIdx].x).toBeCloseTo(mockLandmarks[rightCornerIdx].x, 5);
@@ -47,33 +55,62 @@ describe('LipAugmentation Deformation Engine (Phase 4)', () => {
       1.0
     );
 
-    // Upper lip moves upward (negative dy)
     expect(deformed[cupidsBowIdx].y).toBeLessThan(mockLandmarks[cupidsBowIdx].y);
-    // Lower lip center should remain unaffected
     expect(deformed[lowerCenterIdx].y).toBeCloseTo(mockLandmarks[lowerCenterIdx].y, 4);
   });
 
-  it('moves corners outward horizontally on lip width without changing vertical fullness', () => {
+  it('moves corners outward horizontally on positive width and inward on negative width', () => {
     const leftCornerIdx = LIP_LANDMARK_INDICES.leftCorner;
     const rightCornerIdx = LIP_LANDMARK_INDICES.rightCorner;
 
-    const deformed = deformLipMesh(
+    // Positive width: expansion
+    const expanded = deformLipMesh(
       mockLandmarks,
       baseMesh,
       { upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: 15 },
       1.0
     );
+    expect(expanded[leftCornerIdx].x).toBeLessThan(mockLandmarks[leftCornerIdx].x);
+    expect(expanded[rightCornerIdx].x).toBeGreaterThan(mockLandmarks[rightCornerIdx].x);
 
-    // Width pushes corners outward
-    expect(deformed[leftCornerIdx].x).toBeLessThan(mockLandmarks[leftCornerIdx].x);
-    expect(deformed[rightCornerIdx].x).toBeGreaterThan(mockLandmarks[rightCornerIdx].x);
-    // Corners stay on horizontal line (no vertical change)
-    expect(deformed[leftCornerIdx].y).toBeCloseTo(mockLandmarks[leftCornerIdx].y, 5);
-    expect(deformed[rightCornerIdx].y).toBeCloseTo(mockLandmarks[rightCornerIdx].y, 5);
+    // Negative width: contraction
+    const contracted = deformLipMesh(
+      mockLandmarks,
+      baseMesh,
+      { upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: -15 },
+      1.0
+    );
+    expect(contracted[leftCornerIdx].x).toBeGreaterThan(mockLandmarks[leftCornerIdx].x);
+    expect(contracted[rightCornerIdx].x).toBeLessThan(mockLandmarks[rightCornerIdx].x);
+  });
+
+  it('demonstrates strictly monotonic displacement from 0% -> 25% -> 50% -> 100%', () => {
+    const cupidsBowIdx = LIP_LANDMARK_INDICES.cupidsBowCenter;
+    const d0 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
+    const d25 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { upperFullness: 5, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
+    const d50 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { upperFullness: 10, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
+    const d100 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { upperFullness: 20, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
+
+    expect(d0).toBe(0);
+    expect(d25).toBeGreaterThan(d0);
+    expect(d50).toBeGreaterThan(d25);
+    expect(d100).toBeGreaterThan(d50);
+  });
+
+  it('disables deformation when effectScale is 0', () => {
+    const cupidsBowIdx = LIP_LANDMARK_INDICES.cupidsBowCenter;
+    const deformed = deformLipMesh(
+      mockLandmarks,
+      baseMesh,
+      { upperFullness: 20, lowerFullness: 20, overallFullness: 20, lipWidth: 15 },
+      0.0 // completely gated off
+    );
+
+    expect(deformed[cupidsBowIdx].y).toBeCloseTo(mockLandmarks[cupidsBowIdx].y, 6);
   });
 
   it('leaves non-lip face vertices completely untouched', () => {
-    const foreheadIdx = 10; // landmark 10 is top of forehead
+    const foreheadIdx = 10;
     const deformed = deformLipMesh(
       mockLandmarks,
       baseMesh,

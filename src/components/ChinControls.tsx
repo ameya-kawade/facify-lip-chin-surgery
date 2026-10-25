@@ -32,29 +32,29 @@ export const ChinControls: React.FC<ChinControlsProps> = ({
           <Sliders size={20} className="icon-accent" />
           <h3>Chin & Jawline Simulation</h3>
         </div>
-        <span className="badge-scope">Genioplasty</span>
+        <span className="badge-scope">Frontal 2D</span>
       </div>
 
       {/* Preset Quick Actions */}
       <div className="preset-row">
         <button
           className="btn-preset"
-          onClick={() => applyPreset({ verticalLength: 4, projection: 6, chinWidth: -2 })}
-          title="Subtle vertical elongation with projection"
+          onClick={() => applyPreset({ verticalLength: 5, projection: 6, chinWidth: -3 })}
+          title="Subtle vertical elongation with prominence"
         >
           <Sparkles size={13} /> Natural
         </button>
         <button
           className="btn-preset"
-          onClick={() => applyPreset({ verticalLength: -2, projection: 3, chinWidth: -10 })}
+          onClick={() => applyPreset({ verticalLength: -3, projection: 3, chinWidth: -10 })}
           title="Tapered V-line contour"
         >
           V-Line
         </button>
         <button
           className="btn-preset"
-          onClick={() => applyPreset({ verticalLength: 5, projection: 8, chinWidth: 7 })}
-          title="Broad, prominent masculine jawline"
+          onClick={() => applyPreset({ verticalLength: 6, projection: 8, chinWidth: 8 })}
+          title="Broad, prominent jawline"
         >
           Defined
         </button>
@@ -98,17 +98,17 @@ export const ChinControls: React.FC<ChinControlsProps> = ({
           </div>
         </div>
 
-        {/* 2. Chin Projection */}
+        {/* 2. Chin Prominence (Frontal 2D approx.) */}
         <div className="slider-item">
           <div className="slider-label-row">
-            <span className="slider-title">
-              <Compass size={16} /> Chin Projection
+            <span className="slider-title" title="Frontal 2D contour fullness (true sagittal advancement requires profile view)">
+              <Compass size={16} /> Contour Prominence (approx.)
             </span>
             <span className="slider-value">
               {localValues.projection > 0
-                ? `+${localValues.projection} (Advance)`
+                ? `+${localValues.projection} (Enhance)`
                 : localValues.projection < 0
-                ? `${localValues.projection} (Setback)`
+                ? `${localValues.projection} (Subtle)`
                 : '0 (Natural)'}
             </span>
           </div>
@@ -122,9 +122,9 @@ export const ChinControls: React.FC<ChinControlsProps> = ({
             className="slider-input"
           />
           <div className="slider-ticks">
-            <span>-15 (Setback)</span>
+            <span>-15 (Reduced)</span>
             <span>0</span>
-            <span>+15 (Advance)</span>
+            <span>+15 (Enhanced)</span>
           </div>
         </div>
 

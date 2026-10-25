@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { solveAffineTransform, TrianglePoints } from '../triangleWarp';
+import { solveAffineTransform, warpTriangle, TrianglePoints } from '../triangleWarp';
+import { renderWarpedFrame } from '../imageWarper';
+import { buildLipMesh } from '../../mesh/lipMeshBuilder';
+import { Point2D } from '../../tracking/landmarkSmoother';
 
-describe('Triangle Warp Affine Solver (Phase 5)', () => {
+describe('Triangle Warp Affine Solver (Phase 5 & 6)', () => {
   it('solves identity transform when source and destination are identical', () => {
     const tri: TrianglePoints = {
       p0: { x: 0, y: 0 },
@@ -46,7 +49,7 @@ describe('Triangle Warp Affine Solver (Phase 5)', () => {
     expect(f).toBeCloseTo(dy, 4);
   });
 
-  it('returns null for degenerate collinear points', () => {
+  it('returns null for degenerate collinear points and warpTriangle reports false', () => {
     const degenerate: TrianglePoints = {
       p0: { x: 0, y: 0 },
       p1: { x: 5, y: 5 },
@@ -59,5 +62,49 @@ describe('Triangle Warp Affine Solver (Phase 5)', () => {
     };
     const matrix = solveAffineTransform(degenerate, dst);
     expect(matrix).toBeNull();
+
+    // Fake context mock
+    const fakeCtx = {
+      save: () => {},
+      restore: () => {},
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      closePath: () => {},
+      clip: () => {},
+      transform: () => {},
+      drawImage: () => {},
+    } as unknown as CanvasRenderingContext2D;
+
+    const fakeImage = {} as CanvasImageSource;
+    const success = warpTriangle(fakeCtx, fakeImage, degenerate, dst);
+    expect(success).toBe(false);
+  });
+
+  it('executes identity fast path directly without warping triangles', () => {
+    let drawCount = 0;
+    const fakeCtx = {
+      drawImage: () => { drawCount++; },
+    } as unknown as CanvasRenderingContext2D;
+
+    const mockLandmarks: Point2D[] = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5 }));
+    const mesh = buildLipMesh(mockLandmarks);
+
+    const diag = renderWarpedFrame(
+      fakeCtx,
+      {} as CanvasImageSource,
+      640,
+      480,
+      mockLandmarks,
+      mockLandmarks,
+      mesh,
+      { isIdentity: true }
+    );
+
+    expect(drawCount).toBe(1);
+    expect(diag.activeTriangles).toBe(0);
+    expect(diag.renderedTriangles).toBe(0);
+    expect(diag.skippedTriangles).toBe(0);
+    expect(diag.maxDisplacementPx).toBe(0);
   });
 });

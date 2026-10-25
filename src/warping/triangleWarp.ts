@@ -26,8 +26,8 @@ export function solveAffineTransform(
   const u2 = dst.p2.x, v2 = dst.p2.y;
 
   const denom = x0 * (y1 - y2) + x1 * (y2 - y0) + x2 * (y0 - y1);
-  if (Math.abs(denom) < 1e-10) {
-    return null; // Collinear points
+  if (Math.abs(denom) < 1e-10 || !Number.isFinite(denom)) {
+    return null; // Collinear or degenerate source points
   }
 
   const a = (u0 * (y1 - y2) + u1 * (y2 - y0) + u2 * (y0 - y1)) / denom;
@@ -37,6 +37,17 @@ export function solveAffineTransform(
   const b = (v0 * (y1 - y2) + v1 * (y2 - y0) + v2 * (y0 - y1)) / denom;
   const d = (v0 * (x2 - x1) + v1 * (x0 - x2) + v2 * (x1 - x0)) / denom;
   const f = (v0 * (x1 * y2 - x2 * y1) + v1 * (x2 * y0 - x0 * y2) + v2 * (x0 * y1 - x1 * y0)) / denom;
+
+  if (
+    !Number.isFinite(a) ||
+    !Number.isFinite(b) ||
+    !Number.isFinite(c) ||
+    !Number.isFinite(d) ||
+    !Number.isFinite(e) ||
+    !Number.isFinite(f)
+  ) {
+    return null;
+  }
 
   return [a, b, c, d, e, f];
 }
@@ -73,15 +84,16 @@ export function expandTriangle(tri: TrianglePoints, amountPx: number = 0.5): Tri
  * @param sourceImage HTMLVideoElement, HTMLCanvasElement, or OffscreenCanvas
  * @param srcTriangle 3 points in source image pixel coordinates
  * @param dstTriangle 3 points in destination canvas pixel coordinates
+ * @returns true if successfully warped, false if degenerate or skipped
  */
 export function warpTriangle(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   sourceImage: CanvasImageSource,
   srcTriangle: TrianglePoints,
   dstTriangle: TrianglePoints
-): void {
+): boolean {
   const matrix = solveAffineTransform(srcTriangle, dstTriangle);
-  if (!matrix) return;
+  if (!matrix) return false;
 
   // Expand the destination triangle clip region to eliminate subpixel seam shimmer
   const clipTri = expandTriangle(dstTriangle, 0.5);
@@ -104,4 +116,5 @@ export function warpTriangle(
   ctx.drawImage(sourceImage, 0, 0);
 
   ctx.restore();
+  return true;
 }

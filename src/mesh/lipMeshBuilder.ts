@@ -1,4 +1,3 @@
-import poly2tri from 'poly2tri';
 import { Point2D } from '../tracking/landmarkSmoother';
 import { CANONICAL_TRIANGLES } from './canonicalTriangulation';
 import { LIP_LANDMARK_INDICES, generateLipControlPoints, LipSubmeshVertex } from './lipControlPoints';
@@ -14,7 +13,7 @@ export interface CompleteMesh {
   weights: VertexWeight[];
 }
 
-const LIP_REGION_CANONICAL_INDICES = new Set([
+export const LIP_REGION_CANONICAL_INDICES = new Set([
   ...LIP_LANDMARK_INDICES.upperOuter,
   ...LIP_LANDMARK_INDICES.lowerOuter,
   ...LIP_LANDMARK_INDICES.upperInner,
@@ -24,6 +23,11 @@ const LIP_REGION_CANONICAL_INDICES = new Set([
   321, 324, 375, 402, 405, 409, 415,
 ]);
 
+/**
+ * Builds the complete face mesh using verified canonical triangulation for stability.
+ * Incorporates canonical landmarks and synthetic control points into mesh.vertices,
+ * while using canonical anatomical triangles for guaranteed topological coherence.
+ */
 export function buildLipMesh(neutralLandmarks: Point2D[]): CompleteMesh {
   const allVertices: LipSubmeshVertex[] = [];
   const weights: VertexWeight[] = [];
@@ -42,6 +46,7 @@ export function buildLipMesh(neutralLandmarks: Point2D[]): CompleteMesh {
     weights.push(w);
   }
 
+  // Generate synthetic control points for fine interpolation
   const { extraVertices } = generateLipControlPoints(neutralLandmarks, allVertices.length);
   for (const ev of extraVertices) {
     allVertices.push(ev);
@@ -57,99 +62,32 @@ export function buildLipMesh(neutralLandmarks: Point2D[]): CompleteMesh {
     });
   }
 
-  const canonicalNonLipTriangles: [number, number, number][] = [];
-  const canonicalLipTriangles: [number, number, number][] = [];
-
-  for (const tri of CANONICAL_TRIANGLES) {
-    const [a, b, c] = tri;
-    const isLipTri = LIP_REGION_CANONICAL_INDICES.has(a) &&
-                     LIP_REGION_CANONICAL_INDICES.has(b) &&
-                     LIP_REGION_CANONICAL_INDICES.has(c);
-    if (isLipTri) {
-      canonicalLipTriangles.push([a, b, c]);
-    } else {
-      canonicalNonLipTriangles.push([a, b, c]);
-    }
-  }
-
-  const refinedLipTriangles: [number, number, number][] = [];
-
-  const lipVerticesToTriangulate = allVertices.filter(v =>
-    LIP_REGION_CANONICAL_INDICES.has(v.id) || v.landmarkIndex === -1
+  // Use clean canonical triangulation (Fix B: safe fallback per repair plan)
+  // This eliminates poly2tri's bounding box and guarantees non-crossing, valid geometry
+  const combinedTriangles: [number, number, number][] = CANONICAL_TRIANGLES.map(
+    t => [t[0], t[1], t[2]] as [number, number, number]
   );
 
-  const midY = neutralLandmarks[13] ? (neutralLandmarks[13].y + neutralLandmarks[14].y) / 2 : 0.5;
-  const upperLipVerts = lipVerticesToTriangulate.filter(v => v.y <= midY + 0.005);
-  const lowerLipVerts = lipVerticesToTriangulate.filter(v => v.y >= midY - 0.005);
-
-  function triangulatePoints(verts: LipSubmeshVertex[]) {
-    if (verts.length < 3) return;
-    const p2tPoints: (poly2tri.Point & { customId: number })[] = [];
-    const seen = new Set<string>();
-
-    for (const v of verts) {
-      const key = `${Math.round(v.x * 10000)},${Math.round(v.y * 10000)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      const p = new poly2tri.Point(v.x, v.y) as (poly2tri.Point & { customId: number });
-      p.customId = v.id;
-      p2tPoints.push(p);
-    }
-
-    if (p2tPoints.length < 3) return;
-
-    try {
-      const minX = Math.min(...p2tPoints.map(p => p.x)) - 0.002;
-      const maxX = Math.max(...p2tPoints.map(p => p.x)) + 0.002;
-      const minY = Math.min(...p2tPoints.map(p => p.y)) - 0.002;
-      const maxY = Math.max(...p2tPoints.map(p => p.y)) + 0.002;
-
-      const polyline = [
-        new poly2tri.Point(minX, minY),
-        new poly2tri.Point(maxX, minY),
-        new poly2tri.Point(maxX, maxY),
-        new poly2tri.Point(minX, maxY),
-      ];
-
-      const swctx = new poly2tri.SweepContext(polyline);
-      for (const pt of p2tPoints) {
-        swctx.addPoint(pt);
-      }
-      swctx.triangulate();
-
-      const tris = swctx.getTriangles();
-      for (const t of tris) {
-        const pts = t.getPoints() as unknown as { customId?: number }[];
-        if (pts[0]?.customId !== undefined && pts[1]?.customId !== undefined && pts[2]?.customId !== undefined) {
-          refinedLipTriangles.push([pts[0].customId, pts[1].customId, pts[2].customId]);
-        }
-      }
-    } catch {
-      // Fallback
-    }
-  }
-
-  triangulatePoints(upperLipVerts);
-  triangulatePoints(lowerLipVerts);
-
-  const activeLipTriangles = refinedLipTriangles.length > 20 ? refinedLipTriangles : canonicalLipTriangles;
-
-  const combinedTriangles: [number, number, number][] = [
-    ...canonicalNonLipTriangles,
-    ...activeLipTriangles,
-  ];
-
-  const lipTriangleStartIndex = canonicalNonLipTriangles.length;
-  const lipTriangleIndices = Array.from(
-    { length: activeLipTriangles.length },
-    (_, i) => lipTriangleStartIndex + i
-  );
-
+  const lipTriangleIndices: number[] = [];
   const chinTriangleIndices: number[] = [];
+
   for (let i = 0; i < combinedTriangles.length; i++) {
-    const tri = combinedTriangles[i];
-    if (tri.some(idx => ALL_CHIN_LANDMARK_INDICES.has(idx))) {
+    const [a, b, c] = combinedTriangles[i];
+    const isLip =
+      LIP_REGION_CANONICAL_INDICES.has(a) ||
+      LIP_REGION_CANONICAL_INDICES.has(b) ||
+      LIP_REGION_CANONICAL_INDICES.has(c);
+
+    if (isLip) {
+      lipTriangleIndices.push(i);
+    }
+
+    const isChin =
+      ALL_CHIN_LANDMARK_INDICES.has(a) ||
+      ALL_CHIN_LANDMARK_INDICES.has(b) ||
+      ALL_CHIN_LANDMARK_INDICES.has(c);
+
+    if (isChin) {
       chinTriangleIndices.push(i);
     }
   }

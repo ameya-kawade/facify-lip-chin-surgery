@@ -31,6 +31,12 @@ export function App() {
     isFrontal: true,
     confidence: 0,
     pose: { isFrontal: true, yaw: 0, pitch: 0, roll: 0, score: 1 },
+    rawJawOpen: 0,
+    jawGateScale: 1,
+    effectiveScale: 1,
+    activeTriangles: 0,
+    skippedTriangles: 0,
+    maxDisplacementPx: 0,
   });
 
   const [wireframeActive, setWireframeActive] = useState<boolean>(false);

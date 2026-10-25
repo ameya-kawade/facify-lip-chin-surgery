@@ -102,6 +102,13 @@ export class FaceTracker {
       }
     } catch (err) {
       console.warn('FaceTracker detection error:', err);
+      // Invalidate detection on exception to prevent stale geometry warps
+      this.lastResult = {
+        landmarks: [],
+        rawResult: null,
+        confidence: 0,
+        jawOpen: 0,
+      };
     }
 
     return this.lastResult;

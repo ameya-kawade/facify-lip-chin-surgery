@@ -500,3 +500,10 @@ body {
   color: var(--accent-pink);
   border-color: rgba(236, 72, 153, 0.3);
 }
+
+/* Gated Status Badge */
+.status-pill.gated {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.35);
+}

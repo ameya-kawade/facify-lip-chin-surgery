@@ -1,6 +1,6 @@
 import React from 'react';
 import { RendererStatus } from '../rendering/liveRenderer';
-import { CheckCircle2, AlertTriangle, UserCheck } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, UserCheck, ShieldAlert } from 'lucide-react';
 
 interface TrackingStatusBadgeProps {
   status: RendererStatus;
@@ -36,6 +36,13 @@ export const TrackingStatusBadge: React.FC<TrackingStatusBadgeProps> = ({ status
               <span>Off-Angle (Reduced)</span>
             </>
           )}
+        </div>
+      )}
+
+      {status.faceDetected && status.gateReason && (
+        <div className="status-pill gated" title="Deformation gated off for expression or pose stability">
+          <ShieldAlert size={14} />
+          <span>{status.gateReason}</span>
         </div>
       )}
 
