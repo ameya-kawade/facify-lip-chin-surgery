@@ -34,7 +34,7 @@ describe('LipAugmentation Deformation Engine (Phase 3 & 7)', () => {
     const deformed = deformLipMesh(
       mockLandmarks,
       baseMesh,
-      { upperFullness: 20, lowerFullness: 20, overallFullness: 20, lipWidth: 0 },
+      { ...DEFAULT_LIP_SLIDERS, upperFullness: 20, lowerFullness: 20, overallFullness: 20, lipWidth: 0 },
       1.0
     );
 
@@ -51,7 +51,7 @@ describe('LipAugmentation Deformation Engine (Phase 3 & 7)', () => {
     const deformed = deformLipMesh(
       mockLandmarks,
       baseMesh,
-      { upperFullness: 20, lowerFullness: 0, overallFullness: 0, lipWidth: 0 },
+      { ...DEFAULT_LIP_SLIDERS, upperFullness: 20, lowerFullness: 0, overallFullness: 0, lipWidth: 0 },
       1.0
     );
 
@@ -67,7 +67,7 @@ describe('LipAugmentation Deformation Engine (Phase 3 & 7)', () => {
     const expanded = deformLipMesh(
       mockLandmarks,
       baseMesh,
-      { upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: 15 },
+      { ...DEFAULT_LIP_SLIDERS, upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: 15 },
       1.0
     );
     expect(expanded[leftCornerIdx].x).toBeLessThan(mockLandmarks[leftCornerIdx].x);
@@ -77,7 +77,7 @@ describe('LipAugmentation Deformation Engine (Phase 3 & 7)', () => {
     const contracted = deformLipMesh(
       mockLandmarks,
       baseMesh,
-      { upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: -15 },
+      { ...DEFAULT_LIP_SLIDERS, upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: -15 },
       1.0
     );
     expect(contracted[leftCornerIdx].x).toBeGreaterThan(mockLandmarks[leftCornerIdx].x);
@@ -86,10 +86,10 @@ describe('LipAugmentation Deformation Engine (Phase 3 & 7)', () => {
 
   it('demonstrates strictly monotonic displacement from 0% -> 25% -> 50% -> 100%', () => {
     const cupidsBowIdx = LIP_LANDMARK_INDICES.cupidsBowCenter;
-    const d0 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
-    const d25 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { upperFullness: 5, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
-    const d50 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { upperFullness: 10, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
-    const d100 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { upperFullness: 20, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
+    const d0 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { ...DEFAULT_LIP_SLIDERS, upperFullness: 0, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
+    const d25 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { ...DEFAULT_LIP_SLIDERS, upperFullness: 5, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
+    const d50 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { ...DEFAULT_LIP_SLIDERS, upperFullness: 10, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
+    const d100 = mockLandmarks[cupidsBowIdx].y - deformLipMesh(mockLandmarks, baseMesh, { ...DEFAULT_LIP_SLIDERS, upperFullness: 20, lowerFullness: 0, overallFullness: 0, lipWidth: 0 })[cupidsBowIdx].y;
 
     expect(d0).toBe(0);
     expect(d25).toBeGreaterThan(d0);
@@ -102,7 +102,7 @@ describe('LipAugmentation Deformation Engine (Phase 3 & 7)', () => {
     const deformed = deformLipMesh(
       mockLandmarks,
       baseMesh,
-      { upperFullness: 20, lowerFullness: 20, overallFullness: 20, lipWidth: 15 },
+      { ...DEFAULT_LIP_SLIDERS, upperFullness: 20, lowerFullness: 20, overallFullness: 20, lipWidth: 15 },
       0.0 // completely gated off
     );
 
@@ -114,7 +114,7 @@ describe('LipAugmentation Deformation Engine (Phase 3 & 7)', () => {
     const deformed = deformLipMesh(
       mockLandmarks,
       baseMesh,
-      { upperFullness: 20, lowerFullness: 20, overallFullness: 20, lipWidth: 15 },
+      { ...DEFAULT_LIP_SLIDERS, upperFullness: 20, lowerFullness: 20, overallFullness: 20, lipWidth: 15 },
       1.0
     );
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { deformChinMesh, DEFAULT_CHIN_SLIDERS } from '../chinSurgery';
-import { deformLipMesh } from '../lipAugmentation';
+import { deformLipMesh, DEFAULT_LIP_SLIDERS } from '../lipAugmentation';
 import { buildLipMesh } from '../../mesh/lipMeshBuilder';
 import { CHIN_LANDMARK_INDICES } from '../../mesh/chinControlPoints';
 import { LIP_LANDMARK_INDICES } from '../../mesh/lipControlPoints';
@@ -46,7 +46,7 @@ describe('ChinSurgery Deformation Engine (Phase 4 & 7)', () => {
     const lengthened = deformChinMesh(
       mockLandmarks,
       baseMesh,
-      { verticalLength: 15, projection: 0, chinWidth: 0 },
+      { ...DEFAULT_CHIN_SLIDERS, verticalLength: 15, projection: 0, chinWidth: 0 },
       1.0
     );
     expect(lengthened[apexIdx].y).toBeGreaterThan(mockLandmarks[apexIdx].y);
@@ -55,7 +55,7 @@ describe('ChinSurgery Deformation Engine (Phase 4 & 7)', () => {
     const shortened = deformChinMesh(
       mockLandmarks,
       baseMesh,
-      { verticalLength: -15, projection: 0, chinWidth: 0 },
+      { ...DEFAULT_CHIN_SLIDERS, verticalLength: -15, projection: 0, chinWidth: 0 },
       1.0
     );
     expect(shortened[apexIdx].y).toBeLessThan(mockLandmarks[apexIdx].y);
@@ -67,7 +67,7 @@ describe('ChinSurgery Deformation Engine (Phase 4 & 7)', () => {
     const deformed = deformChinMesh(
       mockLandmarks,
       baseMesh,
-      { verticalLength: 15, projection: 15, chinWidth: 15 },
+      { ...DEFAULT_CHIN_SLIDERS, verticalLength: 15, projection: 15, chinWidth: 15 },
       1.0
     );
 
@@ -82,7 +82,7 @@ describe('ChinSurgery Deformation Engine (Phase 4 & 7)', () => {
     const deformed = deformChinMesh(
       mockLandmarks,
       baseMesh,
-      { verticalLength: 0, projection: 0, chinWidth: -15 },
+      { ...DEFAULT_CHIN_SLIDERS, verticalLength: 0, projection: 0, chinWidth: -15 },
       1.0
     );
 
@@ -98,7 +98,7 @@ describe('ChinSurgery Deformation Engine (Phase 4 & 7)', () => {
     const lipDeformed = deformLipMesh(
       mockLandmarks,
       baseMesh,
-      { upperFullness: 20, lowerFullness: 0, overallFullness: 0, lipWidth: 0 },
+      { ...DEFAULT_LIP_SLIDERS, upperFullness: 20, lowerFullness: 0, overallFullness: 0, lipWidth: 0 },
       1.0
     );
     expect(lipDeformed[cupidsBow].y).toBeLessThan(mockLandmarks[cupidsBow].y);
@@ -107,7 +107,7 @@ describe('ChinSurgery Deformation Engine (Phase 4 & 7)', () => {
     const fullyDeformed = deformChinMesh(
       lipDeformed,
       baseMesh,
-      { verticalLength: 15, projection: 0, chinWidth: 0 },
+      { ...DEFAULT_CHIN_SLIDERS, verticalLength: 15, projection: 0, chinWidth: 0 },
       1.0
     );
 
@@ -123,7 +123,7 @@ describe('ChinSurgery Deformation Engine (Phase 4 & 7)', () => {
     const deformed = deformChinMesh(
       mockLandmarks,
       baseMesh,
-      { verticalLength: 15, projection: 15, chinWidth: 15 },
+      { ...DEFAULT_CHIN_SLIDERS, verticalLength: 15, projection: 15, chinWidth: 15 },
       1.0
     );
 

@@ -3,10 +3,14 @@ import { CompleteMesh } from '../mesh/lipMeshBuilder';
 import { LIP_LANDMARK_INDICES } from '../mesh/lipControlPoints';
 
 export interface LipSliderParams {
-  upperFullness: number;   // -20 to +20
-  lowerFullness: number;   // -20 to +20
-  overallFullness: number; // -20 to +20
-  lipWidth: number;        // -15 to +15
+  upperFullness: number;       // -20 to +20
+  lowerFullness: number;       // -20 to +20
+  overallFullness: number;     // -20 to +20
+  lipWidth: number;            // -15 to +15
+  // ── Advanced clinic-grade controls ────────────────────────────────────────
+  cupidsBowDefinition: number; // -10 to +10  (flatten ↔ sharpen bow peaks)
+  cornerLift: number;          // -10 to +10  (droop corners ↔ lift / smile arc)
+  philtrumProjection: number;  // -10 to +10  (retract ↔ project philtrum column)
 }
 
 export const DEFAULT_LIP_SLIDERS: LipSliderParams = {
@@ -14,6 +18,9 @@ export const DEFAULT_LIP_SLIDERS: LipSliderParams = {
   lowerFullness: 0,
   overallFullness: 0,
   lipWidth: 0,
+  cupidsBowDefinition: 0,
+  cornerLift: 0,
+  philtrumProjection: 0,
 };
 
 /**
@@ -84,7 +91,10 @@ export function deformLipMesh(
     sliders.upperFullness === 0 &&
     sliders.lowerFullness === 0 &&
     sliders.overallFullness === 0 &&
-    sliders.lipWidth === 0;
+    sliders.lipWidth === 0 &&
+    sliders.cupidsBowDefinition === 0 &&
+    sliders.cornerLift === 0 &&
+    sliders.philtrumProjection === 0;
 
   if (isZero) {
     if (sourceVertices.length >= numVertices) {
@@ -101,35 +111,43 @@ export function deformLipMesh(
   const effectScale = Math.max(0, Math.min(1, headAngleConfidence));
 
   // Key reference points for scale and orientation
-  const leftCorner = sourceVertices[LIP_LANDMARK_INDICES.leftCorner] || { x: 0.4, y: 0.6 };
+  const leftCorner  = sourceVertices[LIP_LANDMARK_INDICES.leftCorner]  || { x: 0.4, y: 0.6 };
   const rightCorner = sourceVertices[LIP_LANDMARK_INDICES.rightCorner] || { x: 0.6, y: 0.6 };
-  const mouthWidth = Math.max(0.02, Math.hypot(rightCorner.x - leftCorner.x, rightCorner.y - leftCorner.y));
-  const lipCenterX = (leftCorner.x + rightCorner.x) / 2;
-  const lipCenterY = (leftCorner.y + rightCorner.y) / 2;
+  const mouthWidth  = Math.max(0.02, Math.hypot(rightCorner.x - leftCorner.x, rightCorner.y - leftCorner.y));
+  const lipCenterX  = (leftCorner.x + rightCorner.x) / 2;
+  const lipCenterY  = (leftCorner.y + rightCorner.y) / 2;
   const lipHalfWidth = mouthWidth / 2;
 
   // Calibrate displacement against face scale (mouth width)
-  // Ensures visible, calibrated movement whether close to or far from camera
-  const MAX_FULLNESS_DISP = mouthWidth * 0.08; // ~8% of mouth width
-  const MAX_WIDTH_DISP    = mouthWidth * 0.06; // ~6% of mouth width
+  const MAX_FULLNESS_DISP  = mouthWidth * 0.08;  // ~8%  of mouth width
+  const MAX_WIDTH_DISP     = mouthWidth * 0.06;  // ~6%  of mouth width
+  const MAX_BOW_DISP       = mouthWidth * 0.04;  // ~4%  cupid's bow
+  const MAX_CORNER_DISP    = mouthWidth * 0.05;  // ~5%  corner lift
+  const MAX_PHILTRUM_DISP  = mouthWidth * 0.04;  // ~4%  philtrum projection
 
-  // Step 1: Linear, clamped normalized input in [-1, 1]
-  const rawUpper = Math.max(-1, Math.min(1, (sliders.upperFullness + sliders.overallFullness) / 20));
-  const rawLower = Math.max(-1, Math.min(1, (sliders.lowerFullness + sliders.overallFullness) / 20));
-  const rawWidth = Math.max(-1, Math.min(1, sliders.lipWidth / 15));
+  // Clamped normalised inputs in [-1, 1]
+  const rawUpper    = Math.max(-1, Math.min(1, (sliders.upperFullness + sliders.overallFullness) / 20));
+  const rawLower    = Math.max(-1, Math.min(1, (sliders.lowerFullness + sliders.overallFullness) / 20));
+  const rawWidth    = Math.max(-1, Math.min(1, sliders.lipWidth / 15));
+  const rawBow      = Math.max(-1, Math.min(1, sliders.cupidsBowDefinition / 10));
+  const rawCorner   = Math.max(-1, Math.min(1, sliders.cornerLift / 10));
+  const rawPhiltrum = Math.max(-1, Math.min(1, sliders.philtrumProjection / 10));
 
-  // Step 2: Scale to anatomical bounds
-  const scaledUpper = rawUpper * MAX_FULLNESS_DISP;
-  const scaledLower = rawLower * MAX_FULLNESS_DISP;
-  const scaledWidth = rawWidth * MAX_WIDTH_DISP;
+  const scaledUpper    = rawUpper * MAX_FULLNESS_DISP;
+  const scaledLower    = rawLower * MAX_FULLNESS_DISP;
+  const scaledWidth    = rawWidth * MAX_WIDTH_DISP;
+  const scaledBow      = rawBow * MAX_BOW_DISP;
+  const scaledCorner   = rawCorner * MAX_CORNER_DISP;
+  const scaledPhiltrum = rawPhiltrum * MAX_PHILTRUM_DISP;
 
-  // Step 3: Anatomical ratio enforcement for positive fullness
   const { upper: finalUpper, lower: finalLower } = enforceNaturalRatio(scaledUpper, scaledLower);
 
-  // Step 4: Modulate by effect scale (head pose + jaw open)
   const upperFullnessFactor = finalUpper * effectScale;
   const lowerFullnessFactor = finalLower * effectScale;
   const widthFactor         = scaledWidth * effectScale;
+  const bowFactor           = scaledBow * effectScale;
+  const cornerLiftFactor    = scaledCorner * effectScale;
+  const philtrumFactor      = scaledPhiltrum * effectScale;
 
   for (let i = 0; i < numVertices; i++) {
     const cur = sourceVertices[i];
@@ -154,28 +172,52 @@ export function deformLipMesh(
     let dx = 0;
     let dy = 0;
 
-    // 1. Lip Width Deformation
+    // 1. Lip Width
     if (weight.widthWeight > 0 && widthFactor !== 0) {
       const relX = (curX - lipCenterX) / lipHalfWidth;
       dx += relX * widthFactor * weight.widthWeight;
     }
 
-    // 2. Fullness Deformation (Upper and Lower)
-    // Mouth corners are anchors: weight.fullnessWeight is 0 for corners!
+    // 2. Fullness (Upper / Lower)
     if (weight.fullnessWeight > 0) {
       const distFromCenterNorm = Math.min(1, Math.abs(curX - lipCenterX) / lipHalfWidth);
-      const centerFalloff = Math.cos(distFromCenterNorm * (Math.PI / 2)); // 1 at center, 0 at corners
+      const centerFalloff = Math.cos(distFromCenterNorm * (Math.PI / 2));
 
       if (weight.isUpperLip && upperFullnessFactor !== 0) {
-        // Upper lip moves upward (negative Y in screen coords)
         dy -= upperFullnessFactor * weight.fullnessWeight * centerFalloff;
       } else if (weight.isLowerLip && lowerFullnessFactor !== 0) {
-        // Lower lip moves downward (positive Y in screen coords)
         dy += lowerFullnessFactor * weight.fullnessWeight * centerFalloff;
       }
     }
 
-    // Gaussian containment: fades smoothly into perioral skin without cutting target vermilion
+    // 3. Cupid's Bow Definition  (upper lip only)
+    // Positive → sharper double-peak arc; Negative → flatter vermilion border
+    if (weight.isUpperLip && weight.fullnessWeight > 0 && bowFactor !== 0) {
+      const relX = (curX - lipCenterX) / lipHalfWidth; // [-1..1]
+      // sin shape peaks at ±0.5 and is 0 at centre & corners
+      const bowShape = Math.sin(Math.abs(relX) * Math.PI);
+      dy -= bowFactor * bowShape * weight.fullnessWeight;
+    }
+
+    // 4. Corner Lift
+    // Positive → corners rise (smile arc); Negative → corners drop
+    if (cornerLiftFactor !== 0 && weight.widthWeight > 0) {
+      const relX = (curX - lipCenterX) / lipHalfWidth;
+      const cornerWeight = Math.max(0, Math.abs(relX) - 0.5) * 2; // 0 at centre, 1 at corners
+      dy -= cornerLiftFactor * cornerWeight * weight.widthWeight;
+      // Subtle inward x-pull that mirrors natural smiling geometry
+      dx -= relX * Math.abs(cornerLiftFactor) * 0.3 * cornerWeight * weight.widthWeight;
+    }
+
+    // 5. Philtrum Projection  (upper lip centre column only)
+    // Positive → project philtral column outward; Negative → flatten
+    if (weight.isUpperLip && weight.fullnessWeight > 0 && philtrumFactor !== 0) {
+      const relX = (curX - lipCenterX) / lipHalfWidth;
+      // Tight Gaussian at x=0, σ=0.3
+      const philtrumMask = Math.exp(-(relX * relX) / (2 * 0.09));
+      dy -= philtrumFactor * philtrumMask * weight.fullnessWeight;
+    }
+
     const gaussianScale = gaussianSpatialWeight(curX, curY, lipCenterX, lipCenterY, lipHalfWidth);
 
     deformed[i] = {
