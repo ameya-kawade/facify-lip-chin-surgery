@@ -30,13 +30,19 @@ export class FaceTracker {
 
     this.isInitializing = true;
     try {
-      const fileset = await FilesetResolver.forVisionTasks('/wasm');
+      const baseUrl = import.meta.env.BASE_URL.endsWith('/')
+        ? import.meta.env.BASE_URL
+        : `${import.meta.env.BASE_URL}/`;
+      const wasmPath = `${baseUrl}wasm`;
+      const modelPath = `${baseUrl}models/face_landmarker.task`;
+
+      const fileset = await FilesetResolver.forVisionTasks(wasmPath);
 
       try {
         // Try GPU delegate first as per plan
         this.landmarker = await FaceLandmarker.createFromOptions(fileset, {
           baseOptions: {
-            modelAssetPath: '/models/face_landmarker.task',
+            modelAssetPath: modelPath,
             delegate: 'GPU',
           },
           runningMode: 'VIDEO',
@@ -48,7 +54,7 @@ export class FaceTracker {
         console.warn('FaceTracker: GPU delegate failed, falling back to CPU:', gpuError);
         this.landmarker = await FaceLandmarker.createFromOptions(fileset, {
           baseOptions: {
-            modelAssetPath: '/models/face_landmarker.task',
+            modelAssetPath: modelPath,
             delegate: 'CPU',
           },
           runningMode: 'VIDEO',
